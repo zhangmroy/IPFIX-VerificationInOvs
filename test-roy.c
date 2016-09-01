@@ -65,8 +65,8 @@ typedef struct ipfix_set_header{
 typedef struct ipfix_data_record_ethernet{
     ovs_be32 obs_point_id; //4
     ovs_be32 direction; //4
-    ovs_be8 src_mac[6]; //6
-    ovs_be8 dst_mac[6]; //6
+    uint8_t  src_mac[6]; //6
+//    ovs_be8 dst_mac[6]; //6
 //    ovs_be16 eth_type; //2
 //    ovs_be16 eth_hdlen; //2
 //    ovs_be32 start_time; //4
@@ -76,6 +76,268 @@ typedef struct ipfix_data_record_ethernet{
 //    ovs_be8 flow_end_reason; //1
 }ipfix_data_record_ethernet_t;
 #define IPFIX_DATA_RECORD_ETH_LEN sizeof(ipfix_data_record_ethernet_t) //
+
+/*IPFIX data dealment*/
+struct sflow_xdr {                                                 //
+    /* Exceptions. */
+    jmp_buf env;
+    int errline;
+
+    /* Cursor. 游标*/
+    ovs_be32 *datap;
+    uint32_t i;   //下标
+    uint32_t quads;  //在游标i之后剩下的个数？
+
+    /* Agent. 代理*/
+    char agentIPStr[INET6_ADDRSTRLEN + 2];
+    uint32_t subAgentId;
+    uint32_t uptime_mS;
+
+    /* Datasource. 数据源*/
+    uint32_t dsClass;
+    uint32_t dsIndex;
+
+    /* Sequence numbers. 序列号*/
+    uint32_t dgramSeqNo;
+    uint32_t fsSeqNo;
+    uint32_t csSeqNo;
+
+    /* Structure offsets. 偏移*/
+    struct {
+        uint32_t HEADER;
+        uint32_t SWITCH;
+        uint32_t TUNNEL4_OUT;
+        uint32_t TUNNEL4_IN;
+        uint32_t TUNNEL_VNI_OUT;
+        uint32_t TUNNEL_VNI_IN;
+        uint32_t MPLS;
+        uint32_t IFCOUNTERS;
+        uint32_t LACPCOUNTERS;
+        uint32_t OPENFLOWPORT;
+        uint32_t PORTNAME;
+    } offset;
+
+    /* Flow sample fields. 流表采样域*/
+    uint32_t meanSkipCount;
+    uint32_t samplePool;
+    uint32_t dropEvents;
+    uint32_t inputPortFormat;
+    uint32_t inputPort;
+    uint32_t outputPortFormat;
+    uint32_t outputPort;
+};
+
+static void
+sflowxdr_init(struct sflow_xdr *x, void *buf, size_t len)               //
+{
+    x->datap = buf;
+    x->quads = len >> 2;   //?
+}
+
+static uint32_t
+sflowxdr_next(struct sflow_xdr *x)
+{
+    return ntohl(x->datap[x->i++]); //network to host long 32B
+    /* ntohl:network to host long 32B
+     * htonl:host to network long 32B
+     * ntohs:network to host short 16B
+     * htons:host to network shrot 16B
+     *
+     *
+     * network byte order:按照从高到低
+     * host byte order:不同主机实现不同
+     * */
+}
+
+static ovs_be32
+sflowxdr_next_n(struct sflow_xdr *x)
+{
+    return x->datap[x->i++];
+}
+
+static bool
+sflowxdr_more(const struct sflow_xdr *x, uint32_t q)
+{
+    return q + x->i <= x->quads;  //剩下的多余q？
+}
+
+static void
+sflowxdr_skip(struct sflow_xdr *x, uint32_t q)
+{
+    x->i += q;  //下标增加q
+}
+
+static uint32_t
+sflowxdr_mark(const struct sflow_xdr *x, uint32_t q)
+{
+    return x->i + q;
+}
+
+static bool
+sflowxdr_mark_ok(const struct sflow_xdr *x, uint32_t m)
+{
+    return m == x->i;
+}
+
+static void
+sflowxdr_mark_unique(struct sflow_xdr *x, uint32_t *pi)
+{
+    if (*pi) {
+        SFLOWXDR_throw(x);
+    }
+    *pi = x->i;
+}
+
+static void
+sflowxdr_setc(struct sflow_xdr *x, uint32_t j)
+{
+    x->i = j; //set content
+}
+
+static const char *
+sflowxdr_str(const struct sflow_xdr *x)
+{
+    return (const char *) (x->datap + x->i);
+}
+
+static uint64_t
+sflowxdr_next_int64(struct sflow_xdr *x)
+{
+    uint64_t scratch;
+    scratch = sflowxdr_next(x);
+    scratch <<= 32;   //向高位移32位
+    scratch += sflowxdr_next(x);
+    return scratch;
+}
+
+
+#define SFLOWXDR_try(x) ((x->errline = setjmp(x->env)) == 0)
+#define SFLOWXDR_throw(x) longjmp(x->env, __LINE__)
+#define SFLOWXDR_assert(x, t) if (!(t)) SFLOWXDR_throw(x)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 static void
@@ -88,27 +350,33 @@ print_ipfix(struct ofpbuf *buf){
     printf("ipfix_data_record_ethernet%"PRIu32,IPFIX_DATA_RECORD_ETH_LEN);
     printf("\n");
 
-    const struct ipfix_message_header *ipfix_message_header1;
-    ipfix_message_header1 = ofpbuf_try_pull(buf, IPFIX_MES_HEADER_LEN);
+    char *dgram_buf;
+    int dgram_len = buf->size;
+    struct sflow_xdr xdrDatagram;
+    struct sflow_xdr *x = &xdrDatagram;
 
-    if(!ipfix_message_header1){
-        printf("truncated IPFIX packet header\n");
-        return;
+    memset(x, 0, sizeof *x);
+    if (SFLOWXDR_try(x)) {
+        SFLOWXDR_assert(x, (dgram_buf = ofpbuf_try_pull(buf, buf->size)));
+        sflowxdr_init(x, dgram_buf, dgram_len);
+        SFLOWXDR_assert(x, dgram_len >= 0);
+        /*deal with the ipfix packet*/
+        printf("version1:%"PRIu32,sflowxdr_next(x));
+        printf("version2:%"PRIu32,sflowxdr_next(x));
+        printf("version3:%"PRIu32,sflowxdr_next(x));
+
+
+
+    } else {
+        // CATCH
+        printf("\n>>>>> ERROR in " __FILE__ " at line %u\n", x->errline);
     }
 
-    printf("header: v%"PRIu16", "
-            "length %"PRIu16", "
-            "export time %"PRIu32", "
-            "seq %"PRIu32", "
-            "ovservation domain %"PRIu32,
-            ntohs(ipfix_message_header1->version),
-            ntohs(ipfix_message_header1->length),
-            ntohl(ipfix_message_header1->export_time),
-            ntohl(ipfix_message_header1->seq_number),
-            ntohl(ipfix_message_header1->obs_dmID));
 
-    
+
 }
+
+
 static void
 parse_options(int argc, char *argv[]){
     enum {
