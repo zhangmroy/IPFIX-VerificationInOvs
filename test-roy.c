@@ -3,7 +3,6 @@
 //
 #include <config.h>
 #undef NDEBUG
-#include "netflow.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <getopt.h>
@@ -27,7 +26,6 @@
 #include "openvswitch/types.h"
 #include "openvswitch/compiler.h"
 
-
 static unixctl_cb_func test_ipfix_exit;
 static void parse_options(int argc, char *argv[]);
 OVS_NO_RETURN static void usage(void);
@@ -43,6 +41,7 @@ OVS_NO_RETURN static void usage(void);
 
 typedef uint8_t OVS_BITWISE ovs_be8;
 typedef uint64_t OVS_BITWISE ovs_be64;
+
 /*IPFIX message header*/
 typedef struct ipfix_message_header{
     ovs_be16 version;
@@ -51,161 +50,150 @@ typedef struct ipfix_message_header{
     ovs_be32 seq_number;
     ovs_be32 obs_dmID;
 }ipfix_message_header_t;
-#define IPFIX_MES_HEADER_LEN sizeof(ipfix_message_header_t)
-
 
 /*IPFIX set header*/
 typedef struct ipfix_set_header{
     ovs_be16 set_id;
     ovs_be16 length;
 }ipfix_set_header_t;
-#define IPFIX_SET_HEADER_LEN sizeof(ipfix_set_header_t)
-
 
 /*IPFIX data record for ethernet*/
 typedef struct ipfix_data_record_ethernet{
-    ovs_be32 obs_point_id; //4
-    ovs_be8 direction_ingress; //1
-    ovs_be8 src_mac[6]; //6
-    ovs_be8 dst_mac[6]; //6  在这里+1
-    ovs_be16 eth_type; //2
-    ovs_be8 eth_hdlen; //1
-    ovs_be32 start_time; //4
-    ovs_be32 end_time;  // 4
-    ovs_be64 packets;  // 8
-    ovs_be64 l2_octor_delta_count; //8
-    ovs_be8 flow_end_reason; //1
+    ovs_be32 obs_point_id;
+    ovs_be8 direction_ingress;
+    ovs_be8 src_mac[6];
+    ovs_be8 dst_mac[6];
+    ovs_be16 eth_type;
+    ovs_be8 eth_hdlen;
+    ovs_be32 start_time;
+    ovs_be32 end_time;
+    ovs_be64 packets;
+    ovs_be64 l2_octor_delta_count;
+    ovs_be8 flow_end_reason;
 }ipfix_data_record_ethernet_t;
-#define IPFIX_DATA_RECORD_ETH_LEN sizeof(ipfix_data_record_ethernet_t) //
 
+typedef struct ipfix_data_record_icmp{
+//    TODO
+}ipfix_data_record_icmp_t;
 
-struct ipfix_set_record{
-    ovs_be8 *data;
-    uint32_t i;
-};
-
-static void
-ipfix_set_record_init(struct ipfix_set_record * rec, void * buf){
-    rec->data = buf;
-}
+#define IPFIX_MES_HEADER_LEN sizeof(ipfix_message_header_t)
+#define IPFIX_SET_HEADER_LEN sizeof(ipfix_set_header_t)
+#define IPFIX_DATA_RECORD_ETH_LEN 45
+#define IPFIX_DATA_RECORD_ICMP_LEN sizeof(ipfix_data_record_icmp_t)
 
 static void
-ipfix_set_record_setflag(struct ipfix_set_record * rec, uint32_t j){
-    rec->i = j;
-}
-
-static ovs_be8
-ipfix_next(struct ipfix_set_record * rec)
-{
-    return  ntohl(rec->data[rec->i++]);
-}
-
-
-
-static void
-print_ethernet_record(struct ipfix_data_record_ethernet *ipfix_data_record_ethernet1 ){
-    if(!ipfix_data_record_ethernet1){
-        printf("truncated IPFIX record header\n");
+print_record(void *rec,ovs_be16 dp){
+    if(!rec){
+        printf("truncated IPFIX packet header\n");
         return;
     }
+    
+    
+    switch (ntohs(dp)){
+        case 256:{
+            struct ipfix_data_record_ethernet *p;
+            p = (struct ipfix_data_record_ethernet *) rec;
+            printf("set record: observation_point_id %"PRIu32", "
+                    "src mac %x""%x""%x""%x""%x""%x"", "
+                    "dst mac %x""%x""%x""%x""%x""%x",
+                    ntohl(p->obs_point_id),
+                    (p->src_mac[0]),
+                    (p->src_mac[1]),
+                    (p->src_mac[2]),
+                    (p->src_mac[3]),
+                    (p->src_mac[4]),
+                    (p->src_mac[5]),
+                    (p->dst_mac[0]),
+                    (p->dst_mac[1]),
+                    (p->dst_mac[2]),
+                    (p->dst_mac[3]),
+                    (p->dst_mac[4]),
+                    (p->dst_mac[5])
+            );
+            printf("\n");
 
-    printf("set record: obs_point_id%"PRIu32", "
-            "direction%"PRIu8", "
-            "src mac%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8", "
-            "dst mac%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8"%"PRIu8", "
-            "eth_type%"PRIu16", "
-            "eth_hdlen%"PRIu8", "
-            "start_time%"PRIu32", "
-            "end_time%"PRIu32", "
-            "packets%"PRIu64", "
-            "l2_octor_delta_count%"PRIu64", "
-            "flow_end_reason%"PRIu8,
-            ntohl(ipfix_data_record_ethernet1->obs_point_id),
-            ipfix_data_record_ethernet1->direction_ingress,
-            ipfix_data_record_ethernet1->src_mac[0],
-            ipfix_data_record_ethernet1->src_mac[1],
-            ipfix_data_record_ethernet1->src_mac[2],
-            ipfix_data_record_ethernet1->src_mac[3],
-            ipfix_data_record_ethernet1->src_mac[4],
-            ipfix_data_record_ethernet1->src_mac[5],
-            ipfix_data_record_ethernet1->dst_mac[0],
-            ipfix_data_record_ethernet1->dst_mac[1],
-            ipfix_data_record_ethernet1->dst_mac[2],
-            ipfix_data_record_ethernet1->dst_mac[3],
-            ipfix_data_record_ethernet1->dst_mac[4],
-            ipfix_data_record_ethernet1->dst_mac[5],
-            ntohs(ipfix_data_record_ethernet1->eth_type),
-            ipfix_data_record_ethernet1->eth_hdlen,
-            ntohl(ipfix_data_record_ethernet1->start_time),
-            ntohl(ipfix_data_record_ethernet1->end_time),
-            ntohl(ipfix_data_record_ethernet1->packets),
-            ntohl(ipfix_data_record_ethernet1->l2_octor_delta_count),
-            ipfix_data_record_ethernet1->flow_end_reason
-    );
+            break;
+        }
 
-
+        case 266:{
+            printf("266\n");
+            break;
+        }
+        default:
+            return;
+    }
 }
 
 static void
 print_ipfix(struct ofpbuf *buf){
 
-    const struct ipfix_message_header *ipfix_message_header1;
-    const struct ipfix_set_header *ipfix_set_header1;
-    const struct ipfix_data_record_ethernet *ipfix_data_record_ethernet1;
+    const struct ipfix_message_header *msg_hd;
+    const struct ipfix_set_header *set_hd;
 
-    ipfix_message_header1 = ofpbuf_try_pull(buf, IPFIX_MES_HEADER_LEN);
-    ipfix_set_header1 = ofpbuf_try_pull(buf, IPFIX_SET_HEADER_LEN);
-    ipfix_data_record_ethernet1 = ofpbuf_try_pull(buf,45);
+    msg_hd = ofpbuf_try_pull(buf, IPFIX_MES_HEADER_LEN);
+    set_hd = ofpbuf_try_pull(buf, IPFIX_SET_HEADER_LEN);
 
-    if(!ipfix_message_header1 ){
+    if(!msg_hd ){
         printf("truncated IPFIX packet header\n");
         return;
     }
-    if(!ipfix_set_header1){
+    if(!set_hd){
         printf("truncated IPFIX set header\n");
         return;
     }
-    if(!ipfix_data_record_ethernet1){
-        printf("truncated IPFIX record \n");
-        return;
-    }
 
-    //only print ethernet packet
-    if(ntohs(ipfix_set_header1->set_id) != 256)
+
+    //for so far  just print ethernet
+    if(ntohs(set_hd->set_id) != 256)
         return;
 
     //print ipfix header
     printf("header: v%"PRIu16", "
             "length %"PRIu16", "
-           // "export time %"PRIu32", "
             "seq %"PRIu32", "
             "ovservation domain %"PRIu32,
-            ntohs(ipfix_message_header1->version),
-            ntohs(ipfix_message_header1->length),
-           // ntohl(ipfix_message_header1->export_time),
-            ntohl(ipfix_message_header1->seq_number),
-            ntohl(ipfix_message_header1->obs_dmID));
+            ntohs(msg_hd->version),
+            ntohs(msg_hd->length),
+            ntohl(msg_hd->seq_number),
+            ntohl(msg_hd->obs_dmID));
     printf("\n");
 
     //print ipfix set header
     printf("set header: setId %"PRIu16", "
             "set length %"PRIu16,
-            ntohs(ipfix_set_header1->set_id),
-            ntohs(ipfix_set_header1->length));
+            ntohs(set_hd->set_id),
+            ntohs(set_hd->length));
     printf("\n");
 
-   // int num_packet;
-   // switch (ntohs(ipfix_set_header1->set_id)){
-   //     case 256: //print_ethernet_record(ipfix_data_record_ethernet1);
-   //         break;
-   //     case 270:
-   //         break;
-   //     default:
-   //         return;
-   // }
 
+    //print ipfix record
+    switch (ntohs(set_hd->set_id)){
+        case 256: {
+            struct ipfix_data_record_ethernet *rec;
+            rec = ofpbuf_try_pull(buf, IPFIX_DATA_RECORD_ETH_LEN);
+            if (!rec) {
+                printf("truncated IPFIX ethernet data record\n");
+                return;
+            }
+            print_record((void*)rec, set_hd->set_id);
+            break;
+        }
+        case 266:{
+            struct ipfix_data_record_icmp *rec;
+            if(!rec){
+                printf("truncated IPFIX icmp data record\n");
+                return;
+            }
+            print_record((void*)rec,set_hd->set_id);
+            break;
+        }
+        default:
+            return;
+    }
 
 }
+
+
 static void
 parse_options(int argc, char *argv[]){
     enum {
@@ -308,15 +296,5 @@ test_ipfix_main(int argc, char *argv[])
     unixctl_server_destroy(server);
 }
 OVSTEST_REGISTER("test-ipfix", test_ipfix_main);
-
-
-
-
-
-
-
-
-
-
 
 
