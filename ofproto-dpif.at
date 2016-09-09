@@ -5603,12 +5603,15 @@ m4_define([CHECK_IPFIX_SAMPLING_PACKET],
 
 
   AT_CHECK([ovs-vsctl -- set bridge br0 ipfix=@fix -- \
-                --id=@fix create ipfix targets=\"$1:$IPFIX_PORT\" \
-                        sampling=1 ], [0], [ignore])
+                      --id=@fix create ipfix targets=\"$1:$IPFIX_PORT\" \
+                      sampling=1 ], [0], [ignore])
 
-  dnl 1.two flood ethernet packets(ARP)
-  dnl In arp ,op=1 means request
-  dnl In icmp ,type = 8 means echo-request ,type = 0 means reply normally.
+  dnl open with ARP packets to seed the bridge-learning
+  dnl sample=1 means that we can capture all the IPFIX packets.
+  dnl sending two icmp packets will make the ovs produce IPFIX packets whose sets ID equal to 266 .
+  dnl and sequence_id value will increase.
+  dnl as there are packets from different port, this could be handled by multi-threads.
+  dnl on the other side,the following two icmp packets do have an order, so put some sleep there.
   ovs-appctl netdev-dummy/receive p1 'in_port(2),eth(src=50:54:00:00:00:05,dst=FF:FF:FF:FF:FF:FF),eth_type(0x0806),arp(sip=192.168.0.2,tip=192.168.0.1,op=1,sha=50:54:00:00:00:05,tha=00:00:00:00:00:00)'
   sleep 1
   ovs-appctl netdev-dummy/receive p2 'in_port(1),eth(src=50:54:00:00:00:07,dst=FF:FF:FF:FF:FF:FF),eth_type(0x0806),arp(sip=192.168.0.1,tip=192.168.0.2,op=1,sha=50:54:00:00:00:07,tha=00:00:00:00:00:00)'
@@ -5624,26 +5627,37 @@ m4_define([CHECK_IPFIX_SAMPLING_PACKET],
   AT_CHECK([cat ipfix.log], [0], [dnl
 header: v10, length 65, seq 1, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540005, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540005, dst mac ffffffffffff, 
 header: v10, length 65, seq 2, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540005, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540005, dst mac ffffffffffff, 
 header: v10, length 65, seq 3, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540005, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540005, dst mac ffffffffffff, 
 header: v10, length 65, seq 4, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540007, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540007, dst mac ffffffffffff, 
 header: v10, length 65, seq 5, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540007, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540007, dst mac ffffffffffff, 
 header: v10, length 65, seq 6, ovservation domain 0
 set header: setId 256, set length 49
-set record: observation_point_id 0, src mac 50540007, dst mac ffffffffffff
+set record: observation_point_id 0, packets 1, src mac 50540007, dst mac ffffffffffff, 
+header: v10, length 113, seq 7, ovservation domain 0
+set header: setId 266, set length 97
+set record: observation_point_id 0, packets 1, src mac 50540005, dst mac 50540007, IPVersion 4, Protocol 1, src ip 192.168.0.1, dst ip 192.168.0.2
+header: v10, length 113, seq 8, ovservation domain 0
+set header: setId 266, set length 97
+set record: observation_point_id 0, packets 1, src mac 50540005, dst mac 50540007, IPVersion 4, Protocol 1, src ip 192.168.0.1, dst ip 192.168.0.2
+header: v10, length 113, seq 9, ovservation domain 0
+set header: setId 266, set length 97
+set record: observation_point_id 0, packets 1, src mac 50540007, dst mac 50540005, IPVersion 4, Protocol 1, src ip 192.168.0.2, dst ip 192.168.0.1
+header: v10, length 113, seq 10, ovservation domain 0
+set header: setId 266, set length 97
+set record: observation_point_id 0, packets 1, src mac 50540007, dst mac 50540005, IPVersion 4, Protocol 1, src ip 192.168.0.2, dst ip 192.168.0.1
 ])
 
 ])
-
 
 
 AT_SETUP([ofproto-dpif - IPFIX packet sampling - IPv4 collector])
@@ -5651,9 +5665,6 @@ CHECK_IPFIX_SAMPLING_PACKET([127.0.0.1])
 AT_CLEANUP
 
 
-dnl In the absence of an IPFIX collector to verify protocol correctness, simply
-dnl configure IPFIX and ensure that sample action generation works at the
-dnl datapath level.
 AT_SETUP([ofproto-dpif - Basic IPFIX sanity check])
 OVS_VSWITCHD_START
 ADD_OF_PORTS([br0], 1, 2)
